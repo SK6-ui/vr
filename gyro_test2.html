@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>陀螺儀診斷 v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#06010f;color:#fff;font-family:monospace;padding:16px;min-height:100vh;}
+h2{font-size:13px;letter-spacing:.3em;color:#c084fc;margin-bottom:12px;text-align:center;}
+.card{padding:12px 14px;margin-bottom:8px;border-radius:10px;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);line-height:2;}
+.card.red{background:rgba(255,80,80,.12);border-color:rgba(255,80,80,.35);}
+.card.green{background:rgba(80,255,180,.1);border-color:rgba(80,255,180,.35);}
+.card.yellow{background:rgba(255,220,80,.1);border-color:rgba(255,220,80,.35);}
+.title{font-size:10px;letter-spacing:.3em;color:rgba(255,180,255,.6);display:block;margin-bottom:4px;}
+.big{font-size:22px;font-weight:bold;}
+.sm{font-size:11px;color:rgba(255,255,255,.5);}
+button{width:100%;padding:14px;border:none;border-radius:10px;font-size:14px;
+  font-family:monospace;letter-spacing:.15em;cursor:pointer;margin-bottom:8px;
+  background:linear-gradient(135deg,rgba(180,60,255,.7),rgba(255,80,180,.5));
+  border:1px solid rgba(200,100,255,.6);color:#fff;}
+#log{font-size:10px;color:rgba(255,255,255,.4);line-height:1.9;margin-top:8px;
+  padding:10px;background:rgba(0,0,0,.3);border-radius:8px;max-height:260px;overflow-y:auto;
+  white-space:pre-wrap;word-break:break-all;}
+</style>
+</head>
+<body>
+<h2>🥽 陀螺儀診斷 v2</h2>
+
+<div class="card" id="cHttps">
+  <span class="title">HTTPS 狀態</span>
+  <span id="vHttps" class="big">—</span><br>
+  <span id="vHttpsSub" class="sm"></span>
+</div>
+
+<div class="card" id="cSupport">
+  <span class="title">DeviceOrientationEvent 支援</span>
+  <span id="vSupport" class="big">—</span><br>
+  <span id="vSupportSub" class="sm"></span>
+</div>
+
+<div class="card" id="cPerm">
+  <span class="title">權限狀態</span>
+  <span id="vPerm" class="big">—</span><br>
+  <span id="vPermSub" class="sm"></span>
+</div>
+
+<button id="btnReq">點我請求陀螺儀權限（iOS 需要）</button>
+<button id="btnListen" style="background:linear-gradient(135deg,rgba(0,180,100,.7),rgba(0,120,60,.5));border-color:rgba(0,200,120,.5);">開始監聽 deviceorientation</button>
+
+<div class="card" id="cEvent">
+  <span class="title">最新事件</span>
+  <span id="vEvent" class="big" style="font-size:14px;">尚未收到</span>
+</div>
+
+<div class="card" id="cCount">
+  <span class="title">事件計數（晃動手機看這個數字有沒有增加）</span>
+  <span id="vCount" class="big" style="color:#80ffcc;">0</span>
+</div>
+
+<div id="log">等待操作...</div>
+
+<script>
+function log(msg){ 
+  const el = document.getElementById('log');
+  el.textContent = new Date().toISOString().slice(11,23) + ' ' + msg + '\n' + el.textContent;
+}
+
+// 1. HTTPS 檢測
+const isHttps = location.protocol === 'https:' || location.hostname === 'localhost';
+const httpsCard = document.getElementById('cHttps');
+document.getElementById('vHttps').textContent = location.protocol;
+document.getElementById('vHttpsSub').textContent = location.href.slice(0, 60);
+if(isHttps){
+  httpsCard.classList.add('green');
+  log('✅ HTTPS OK: ' + location.protocol);
+} else {
+  httpsCard.classList.add('red');
+  log('❌ 不是 HTTPS，感測器可能被封鎖');
+}
+
+// 2. 支援檢測
+const hasAPI = typeof DeviceOrientationEvent !== 'undefined';
+const hasReqPerm = hasAPI && typeof DeviceOrientationEvent.requestPermission === 'function';
+const supportCard = document.getElementById('cSupport');
+document.getElementById('vSupport').textContent = hasAPI ? '✅ 有' : '❌ 無';
+document.getElementById('vSupportSub').textContent = 
+  'requestPermission: ' + (hasReqPerm ? '有（iOS）' : '無（Android/桌面）');
+supportCard.classList.add(hasAPI ? 'green' : 'red');
+log('DeviceOrientationEvent: ' + hasAPI + ', requestPermission: ' + hasReqPerm);
+
+// 3. Permissions API 查詢
+async function checkPerm(){
+  const permCard = document.getElementById('cPerm');
+  if(navigator.permissions){
+    try{
+      // 有些瀏覽器支援查詢 accelerometer/gyroscope
+      const results = await Promise.allSettled([
+        navigator.permissions.query({name:'accelerometer'}),
+        navigator.permissions.query({name:'gyroscope'}),
+        navigator.permissions.query({name:'magnetometer'}),
+      ]);
+      const names = ['accelerometer','gyroscope','magnetometer'];
+      const msgs = results.map((r,i) => 
+        names[i] + ': ' + (r.status==='fulfilled' ? r.value.state : '不支援查詢')
+      );
+      document.getElementById('vPerm').textContent = results[1].status==='fulfilled' ? results[1].value.state : '無法查詢';
+      document.getElementById('vPermSub').textContent = msgs.join(' | ');
+      permCard.classList.add(
+        results[1].status==='fulfilled' && results[1].value.state==='granted' ? 'green' : 'yellow'
+      );
+      log('Permissions: ' + msgs.join(', '));
+    } catch(err){
+      document.getElementById('vPerm').textContent = '查詢失敗';
+      document.getElementById('vPermSub').textContent = err.message;
+      permCard.classList.add('yellow');
+      log('Permissions query error: ' + err.message);
+    }
+  } else {
+    document.getElementById('vPerm').textContent = 'API 不可用';
+    permCard.classList.add('yellow');
+    log('navigator.permissions 不存在');
+  }
+}
+checkPerm();
+
+// 4. iOS 請求權限按鈕
+document.getElementById('btnReq').addEventListener('click', async ()=>{
+  log('點擊請求權限...');
+  if(typeof DeviceOrientationEvent !== 'undefined' && 
+     typeof DeviceOrientationEvent.requestPermission === 'function'){
+    try{
+      const result = await DeviceOrientationEvent.requestPermission();
+      log('requestPermission 結果: ' + result);
+      alert('結果: ' + result);
+    } catch(err){
+      log('requestPermission 錯誤: ' + err.message);
+      alert('錯誤: ' + err.message);
+    }
+  } else {
+    log('此裝置不需要 requestPermission（Android）');
+    alert('Android 裝置不需要請求權限');
+  }
+});
+
+// 5. 監聽按鈕
+let listening = false;
+let count = 0;
+document.getElementById('btnListen').addEventListener('click', ()=>{
+  if(listening) return;
+  listening = true;
+  log('開始監聽 deviceorientation...');
+
+  // 同時監聽三種事件
+  window.addEventListener('deviceorientation', onOrient, true);
+  window.addEventListener('deviceorientationabsolute', onOrientAbs, true);
+  window.addEventListener('devicemotion', onMotion, true);
+
+  setTimeout(()=>{
+    if(count === 0){
+      log('⚠️ 5秒內沒有收到任何事件！');
+      log('可能原因:');
+      log('  1. Chrome 需要在 網站設定 > 動態感應器 開啟');
+      log('  2. 系統設定關閉了感測器');
+      log('  3. 模擬器/虛擬機沒有感測器');
+    }
+  }, 5000);
+});
+
+function onOrient(e){
+  count++;
+  document.getElementById('vCount').textContent = count;
+  const msg = `deviceorientation: α=${e.alpha?.toFixed(1)} β=${e.beta?.toFixed(1)} γ=${e.gamma?.toFixed(1)} abs=${e.absolute}`;
+  document.getElementById('vEvent').textContent = msg;
+  if(count <= 5 || count % 20 === 0) log(msg);
+  document.getElementById('cEvent').classList.remove('red');
+  document.getElementById('cEvent').classList.add('green');
+}
+
+function onOrientAbs(e){
+  if(count < 3) log(`deviceorientationabsolute: α=${e.alpha?.toFixed(1)} β=${e.beta?.toFixed(1)} γ=${e.gamma?.toFixed(1)}`);
+}
+
+function onMotion(e){
+  if(count < 3){
+    const a = e.acceleration;
+    log(`devicemotion: x=${a?.x?.toFixed(2)} y=${a?.y?.toFixed(2)} z=${a?.z?.toFixed(2)}`);
+  }
+}
+</script>
+</body>
+</html>
